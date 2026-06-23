@@ -1,0 +1,16 @@
+[Unit]
+Description=Sharof Telegram AI bot
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sharof
+EnvironmentFile=/opt/sharof/.env
+ExecStart=/opt/sharof/.venv/bin/python -m sharof.main
+Restart=always
+RestartSec=5
+User=sharof
+
+[Install]
+WantedBy=multi-user.target
