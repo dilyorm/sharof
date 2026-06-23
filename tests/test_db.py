@@ -5,8 +5,6 @@ import pytest
 
 from sharof import db
 
-pytestmark = pytest.mark.asyncio
-
 TEST_DSN = os.environ.get("TEST_DATABASE_URL")
 skip_no_db = pytest.mark.skipif(not TEST_DSN, reason="TEST_DATABASE_URL not set")
 
@@ -24,6 +22,7 @@ async def pool():
 
 
 @skip_no_db
+@pytest.mark.asyncio
 async def test_store_and_fetch_recent_oldest_first(pool):
     await db.store_message(pool, 1, "group", 10, "alice", "first", False)
     await db.store_message(pool, 1, "group", 11, "bob", "second", False)
@@ -35,6 +34,7 @@ async def test_store_and_fetch_recent_oldest_first(pool):
 
 
 @skip_no_db
+@pytest.mark.asyncio
 async def test_fetch_recent_limit_keeps_latest(pool):
     for i in range(5):
         await db.store_message(pool, 2, "group", 1, "u", f"m{i}", False)
@@ -43,6 +43,7 @@ async def test_fetch_recent_limit_keeps_latest(pool):
 
 
 @skip_no_db
+@pytest.mark.asyncio
 async def test_interject_roundtrip(pool):
     assert await db.get_last_interject(pool, 3) is None
     ts = datetime(2026, 1, 1, tzinfo=timezone.utc)

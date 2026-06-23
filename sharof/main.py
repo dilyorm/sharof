@@ -22,13 +22,13 @@ async def run() -> None:
     await db.init_schema(pool)
 
     bot = Bot(token=settings.telegram_token)
+    me = await bot.get_me()
     if not settings.bot_username:
-        me = await bot.get_me()
         object.__setattr__(settings, "bot_username", me.username or "")
         logging.info("Resolved bot username: %s", settings.bot_username)
 
     async with httpx.AsyncClient() as client:
-        dp = build_dispatcher(pool, client, settings)
+        dp = build_dispatcher(pool, client, settings, me.id)
         try:
             await dp.start_polling(bot)
         finally:

@@ -6,8 +6,6 @@ from sharof import gate
 from sharof.config import Settings
 from sharof.db import Message
 
-pytestmark = pytest.mark.asyncio
-
 
 def _settings(**kw):
     base = dict(
@@ -56,6 +54,7 @@ class FakePool:
         self._last = last
 
 
+@pytest.mark.asyncio
 async def test_should_interject_stops_on_heuristic_miss(monkeypatch):
     judge_called = {"n": 0}
 
@@ -77,6 +76,7 @@ async def test_should_interject_stops_on_heuristic_miss(monkeypatch):
     assert judge_called["n"] == 0
 
 
+@pytest.mark.asyncio
 async def test_should_interject_stops_on_cooldown(monkeypatch):
     judge_called = {"n": 0}
 
@@ -98,6 +98,7 @@ async def test_should_interject_stops_on_cooldown(monkeypatch):
     assert judge_called["n"] == 0
 
 
+@pytest.mark.asyncio
 async def test_should_interject_all_pass(monkeypatch):
     async def fake_judge(*a, **k):
         return True
