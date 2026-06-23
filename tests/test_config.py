@@ -30,7 +30,7 @@ def test_load_settings_uses_defaults():
         "DATABASE_URL": "postgresql://u:p@localhost/db",
     }
     s = load_settings(env)
-    assert s.openrouter_model == "deepseek/deepseek-chat-v3-0324:free"
+    assert s.openrouter_model == "openai/gpt-oss-120b:free"
     assert s.context_msgs == 20
     assert s.interject_cooldown_sec == 300
     assert s.trigger_words == []
