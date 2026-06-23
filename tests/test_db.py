@@ -13,6 +13,8 @@ skip_no_db = pytest.mark.skipif(not TEST_DSN, reason="TEST_DATABASE_URL not set"
 
 @pytest.fixture
 async def pool():
+    if not TEST_DSN:
+        pytest.skip("TEST_DATABASE_URL not set")
     p = await db.connect(TEST_DSN)
     await db.init_schema(p)
     async with p.acquire() as con:
