@@ -37,6 +37,32 @@ def test_load_settings_uses_defaults():
     assert s.bot_username == ""
 
 
+def test_load_settings_controller_fields():
+    env = {
+        "TELEGRAM_TOKEN": "tok",
+        "OPENROUTER_API_KEY": "key",
+        "DATABASE_URL": "postgresql://u:p@localhost/db",
+        "OWNER_IDS": "111, 222",
+        "PC_URL": "http://127.0.0.1:9099/",
+        "PC_SECRET": "s3cret",
+        "ALLOW_SHELL": "false",
+    }
+    s = load_settings(env)
+    assert s.owner_ids == frozenset({111, 222})
+    assert s.pc_url == "http://127.0.0.1:9099"
+    assert s.pc_secret == "s3cret"
+    assert s.allow_shell is False
+
+
+def test_controller_defaults_are_locked_down():
+    s = load_settings({
+        "TELEGRAM_TOKEN": "tok", "OPENROUTER_API_KEY": "key", "DATABASE_URL": "x",
+    })
+    assert s.owner_ids == frozenset()  # no owners => agent never runs
+    assert s.openrouter_tool_model == "deepseek/deepseek-chat-v3-0324"
+    assert s.pc_url == "http://127.0.0.1:9099"
+
+
 def test_load_settings_missing_required_raises():
     with pytest.raises(ValueError):
         load_settings({"OPENROUTER_API_KEY": "key", "DATABASE_URL": "x"})

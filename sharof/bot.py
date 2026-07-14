@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message as TgMessage
 
-from sharof import db, gate, llm
+from sharof import agent, db, gate, llm
 from sharof.config import Settings
 
 log = logging.getLogger("sharof")
@@ -17,10 +17,22 @@ log = logging.getLogger("sharof")
 def build_dispatcher(pool, client: httpx.AsyncClient, settings: Settings, bot_id: int) -> Dispatcher:
     dp = Dispatcher()
 
+    def _is_owner(message: TgMessage) -> bool:
+        # Tools are remote code execution on two machines. Owner user ids only,
+        # and never in a group (anyone can add the bot to one).
+        return (
+            message.chat.type == "private"
+            and message.from_user is not None
+            and message.from_user.id in settings.owner_ids
+        )
+
     async def _reply_with_context(message: TgMessage) -> None:
         history = await db.fetch_recent(pool, message.chat.id, settings.context_msgs)
         try:
-            answer = await llm.chat(client, settings, history)
+            if _is_owner(message):
+                answer = await agent.handle(client, settings, history)
+            else:
+                answer = await llm.chat(client, settings, history)
         except llm.LLMError:
             log.warning("chat LLM failed for chat %s", message.chat.id)
             await message.reply("Band edaman, birozdan keyin urinib ko'ring. / Busy, try again soon.")

@@ -41,17 +41,12 @@ def build_messages(history: list[Message], bot_username: str) -> list[dict]:
     return msgs
 
 
-async def _post(
-    client: httpx.AsyncClient, settings: Settings, messages: list[dict], max_tokens: int
-) -> str:
+async def _request(
+    client: httpx.AsyncClient, settings: Settings, payload: dict
+) -> dict:
     headers = {
         "Authorization": f"Bearer {settings.openrouter_api_key}",
         "Content-Type": "application/json",
-    }
-    payload = {
-        "model": settings.openrouter_model,
-        "messages": messages,
-        "max_tokens": max_tokens,
     }
     last_exc: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS):
@@ -62,12 +57,38 @@ async def _post(
                 await asyncio.sleep(_BASE_DELAY * (2 ** attempt))
                 continue
             resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
+            return resp.json()["choices"][0]["message"]
         except (httpx.HTTPError, KeyError, ValueError) as exc:
             last_exc = exc
             await asyncio.sleep(_BASE_DELAY * (2 ** attempt))
     raise LLMError(f"OpenRouter call failed after {_MAX_ATTEMPTS} attempts: {last_exc}")
+
+
+async def _post(
+    client: httpx.AsyncClient, settings: Settings, messages: list[dict], max_tokens: int
+) -> str:
+    msg = await _request(client, settings, {
+        "model": settings.openrouter_model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+    })
+    content = msg.get("content")
+    if content is None:
+        raise LLMError("no content in response")
+    return content.strip()
+
+
+async def tool_call(
+    client: httpx.AsyncClient, settings: Settings, messages: list[dict], tools: list[dict]
+) -> dict:
+    """One tool-calling round. Returns the raw assistant message dict."""
+    return await _request(client, settings, {
+        "model": settings.openrouter_tool_model,
+        "messages": messages,
+        "tools": tools,
+        "max_tokens": 512,
+        "temperature": 0.3,
+    })
 
 
 async def chat(client: httpx.AsyncClient, settings: Settings, history: list[Message]) -> str:
