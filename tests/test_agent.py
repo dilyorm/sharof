@@ -46,6 +46,8 @@ async def test_tool_call_then_final_answer():
                 assert any(t["function"]["name"] == "pc_intent" for t in body["tools"])
                 return _assistant(tool_calls=_call("pc_intent", {"text": "open youtube"}))
             return _assistant(content="YouTube ochildi.")
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"ok": True})
         seen["pc"] = json.loads(request.content)
         return httpx.Response(200, json={"reply": "Opening YouTube"})
 
@@ -57,6 +59,44 @@ async def test_tool_call_then_final_answer():
     assert out == "YouTube ochildi."
     assert seen["pc"] == {"text": "open youtube"}
     assert seen["tool_msgs"][0]["content"] == "Opening YouTube"
+
+
+@pytest.mark.asyncio
+async def test_live_pc_status_overrides_a_stale_offline_in_the_history():
+    """The model kept parroting an old 'PC offline' instead of calling the tool."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if OPENROUTER in request.url.host:
+            body = json.loads(request.content)
+            seen["system"] = body["messages"][0]["content"]
+            return _assistant(content="ok")
+        return httpx.Response(200, json={"ok": True})  # /health: the PC is up
+
+    history = [
+        Message(7, "dm", "open youtube on pc", False),
+        Message(None, "sharof", "Your PC is still offline. Let me know when it's back.", True),
+        Message(7, "dm", "open youtube on pc", False),
+    ]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await agent.handle(client, _settings(), history)
+
+    assert "ONLINE" in seen["system"]
+    assert "stale" in seen["system"].lower()
+
+
+@pytest.mark.asyncio
+async def test_offline_pc_is_reported_as_offline():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if OPENROUTER in request.url.host:
+            seen = json.loads(request.content)["messages"][0]["content"]
+            assert "OFFLINE" in seen
+            return _assistant(content="PC is off")
+        raise httpx.ConnectError("refused", request=request)  # /health: tunnel down
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        out = await agent.handle(client, _settings(), [Message(7, "dm", "open youtube", False)])
+    assert out == "PC is off"
 
 
 @pytest.mark.asyncio

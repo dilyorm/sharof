@@ -29,8 +29,11 @@ SYSTEM_PROMPT = (
     "pc_keys, or to check on a run. pc_screenshot: send the owner the picture itself.\n"
     "- pc_keys: type into the focused window on the PC.\n"
     "- server_run / read_file / write_file: this server, not the PC.\n"
-    "If the message is just conversation, answer directly and call no tool. If a tool "
-    "reports the PC is offline, say so plainly.\n\n"
+    "If the message is just conversation, answer directly and call no tool.\n\n"
+    "ACT, DON'T PROMISE: when the owner asks for something on the PC, call the tool in "
+    "this turn. Never say you will do it in a moment — there is no later turn. Never "
+    "claim the PC is offline unless a tool you called just now said so; earlier messages "
+    "in this chat may be stale.\n\n"
     "FORMAT: Telegram shows your reply as plain text. Never use markdown — no **bold**, "
     "no ##headings, no backticks, no numbered/bulleted markdown lists. Write plain "
     "sentences; if you must list things, one per line with a leading '- '. Keep it "
@@ -47,7 +50,19 @@ async def handle(
 ) -> str:
     """history ends with the owner's new message (bot.py stores it first)."""
     schemas = tools.schemas(settings)
-    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    # The model was parroting an old "PC offline" out of the chat history instead of
+    # trying. Give it the truth for this turn, checked against the tunnel just now.
+    online = await tools.pc_online(client, settings)
+    status = (
+        "PC STATUS RIGHT NOW: ONLINE — the tunnel is up and every pc_* tool will work. "
+        "Any earlier message in this chat saying the PC is offline is stale. Use the tools."
+        if online else
+        "PC STATUS RIGHT NOW: OFFLINE — miki is not running on the PC, so pc_* tools will "
+        "fail. Tell the owner, and do not pretend to run anything."
+    )
+
+    messages: list[dict] = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{status}"}]
     messages += llm.build_messages(history, settings.bot_username)[1:]
 
     for _ in range(MAX_ITERS):

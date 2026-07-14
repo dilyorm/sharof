@@ -307,6 +307,12 @@ async def _pc_get(
         return truncate(f"PC returned non-JSON: {resp.text}")
 
 
+async def pc_online(client: httpx.AsyncClient, settings: Settings) -> bool:
+    """Is the tunnel up right now? Chat history is not evidence — ask the PC."""
+    body = await _pc_get(client, settings, "/health", 5)
+    return isinstance(body, dict) and bool(body.get("ok"))
+
+
 async def _watch_claude_job(
     client: httpx.AsyncClient, settings: Settings, job_id: str, notify: Notifier
 ) -> None:
