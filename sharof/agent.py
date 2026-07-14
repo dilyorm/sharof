@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import httpx
 
@@ -42,6 +43,34 @@ SYSTEM_PROMPT = (
 )
 
 
+# Things the bot said in the past that are false once the tunnel is back up. Left in
+# the history, the model imitates them: it answers "your PC is offline" and calls no
+# tool at all (measured: 5 failures in 6 calls on a poisoned history).
+_STALE_OFFLINE = re.compile(r"offline|tunnel down|not connected|can't reach your pc", re.I)
+
+
+def _status(online: bool) -> str:
+    if online:
+        return (
+            "PC STATUS RIGHT NOW: ONLINE. The tunnel is up and every pc_* tool works. "
+            "Do not say the PC is offline. Call the tool."
+        )
+    return (
+        "PC STATUS RIGHT NOW: OFFLINE. miki is not running on the PC, so pc_* tools will "
+        "fail. Say so, and do not pretend to have run anything."
+    )
+
+
+def _clean_history(history: list[Message], bot_username: str, online: bool) -> list[dict]:
+    msgs = llm.build_messages(history, bot_username)[1:]  # drop the chat system prompt
+    if not online:
+        return msgs
+    return [
+        m for m in msgs
+        if not (m["role"] == "assistant" and _STALE_OFFLINE.search(m.get("content") or ""))
+    ]
+
+
 async def handle(
     client: httpx.AsyncClient,
     settings: Settings,
@@ -50,20 +79,13 @@ async def handle(
 ) -> str:
     """history ends with the owner's new message (bot.py stores it first)."""
     schemas = tools.schemas(settings)
-
-    # The model was parroting an old "PC offline" out of the chat history instead of
-    # trying. Give it the truth for this turn, checked against the tunnel just now.
     online = await tools.pc_online(client, settings)
-    status = (
-        "PC STATUS RIGHT NOW: ONLINE — the tunnel is up and every pc_* tool will work. "
-        "Any earlier message in this chat saying the PC is offline is stale. Use the tools."
-        if online else
-        "PC STATUS RIGHT NOW: OFFLINE — miki is not running on the PC, so pc_* tools will "
-        "fail. Tell the owner, and do not pretend to run anything."
-    )
 
-    messages: list[dict] = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{status}"}]
-    messages += llm.build_messages(history, settings.bot_username)[1:]
+    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages += _clean_history(history, settings.bot_username, online)
+    # Last thing the model reads before answering: what is actually true right now.
+    # In the system prompt this lost to the weight of the chat history.
+    messages.append({"role": "system", "content": _status(online)})
 
     for _ in range(MAX_ITERS):
         msg = await llm.tool_call(client, settings, messages, schemas)

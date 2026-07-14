@@ -62,34 +62,59 @@ async def test_tool_call_then_final_answer():
 
 
 @pytest.mark.asyncio
-async def test_live_pc_status_overrides_a_stale_offline_in_the_history():
-    """The model kept parroting an old 'PC offline' instead of calling the tool."""
+async def test_stale_offline_replies_are_dropped_when_the_pc_is_up():
+    """The model imitated its own old 'PC offline' lines and called no tool at all."""
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if OPENROUTER in request.url.host:
             body = json.loads(request.content)
-            seen["system"] = body["messages"][0]["content"]
+            seen["messages"] = body["messages"]
             return _assistant(content="ok")
         return httpx.Response(200, json={"ok": True})  # /health: the PC is up
 
     history = [
         Message(7, "dm", "open youtube on pc", False),
         Message(None, "sharof", "Your PC is still offline. Let me know when it's back.", True),
+        Message(None, "sharof", "Salom!", True),
         Message(7, "dm", "open youtube on pc", False),
     ]
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         await agent.handle(client, _settings(), history)
 
-    assert "ONLINE" in seen["system"]
-    assert "stale" in seen["system"].lower()
+    bodies = [m.get("content") for m in seen["messages"]]
+    assert not any("still offline" in (b or "") for b in bodies), "stale lie must not be replayed"
+    assert "Salom!" in bodies, "unrelated history must survive"
+    # The live status is the last thing the model reads, not buried in the system prompt.
+    assert "ONLINE" in seen["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_offline_history_is_kept_when_the_pc_really_is_offline():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if OPENROUTER in request.url.host:
+            seen["messages"] = json.loads(request.content)["messages"]
+            return _assistant(content="still offline")
+        raise httpx.ConnectError("refused", request=request)
+
+    history = [
+        Message(None, "sharof", "Your PC is offline.", True),
+        Message(7, "dm", "open youtube", False),
+    ]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await agent.handle(client, _settings(), history)
+
+    assert any("offline" in (m.get("content") or "") for m in seen["messages"][:-1])
+    assert "OFFLINE" in seen["messages"][-1]["content"]
 
 
 @pytest.mark.asyncio
 async def test_offline_pc_is_reported_as_offline():
     def handler(request: httpx.Request) -> httpx.Response:
         if OPENROUTER in request.url.host:
-            seen = json.loads(request.content)["messages"][0]["content"]
+            seen = json.loads(request.content)["messages"][-1]["content"]
             assert "OFFLINE" in seen
             return _assistant(content="PC is off")
         raise httpx.ConnectError("refused", request=request)  # /health: tunnel down

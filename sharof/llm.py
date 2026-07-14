@@ -86,7 +86,12 @@ async def tool_call(
         "model": settings.openrouter_tool_model,
         "messages": messages,
         "tools": tools,
-        "max_tokens": 512,
+        # OpenRouter spreads a model across providers and silently drops `tools` on the
+        # ones that don't support it; require_parameters keeps us on those that do.
+        "provider": {"require_parameters": True},
+        # 512 was tight enough that a run once ended with finish_reason=length before it
+        # could emit the tool call.
+        "max_tokens": 1024,
         "temperature": 0.3,
     })
 
