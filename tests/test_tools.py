@@ -1,8 +1,23 @@
+import asyncio
+import base64
+
 import httpx
 import pytest
 
 from sharof import tools
 from sharof.config import Settings
+
+
+class FakeNotifier:
+    def __init__(self):
+        self.texts = []
+        self.photos = []
+
+    async def text(self, body):
+        self.texts.append(body)
+
+    async def photo(self, png, caption):
+        self.photos.append((png, caption))
 
 
 def _settings(**kw):
@@ -97,6 +112,74 @@ async def test_shell_tools_hidden_and_refused_when_disabled():
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200))) as c:
         out = await tools.execute("server_run", {"command": "ls"}, c, settings)
     assert "shell is disabled" in out
+
+
+@pytest.mark.asyncio
+async def test_claude_code_starts_a_job_and_reports_the_result_later(monkeypatch):
+    monkeypatch.setattr(tools, "_JOB_POLL_SEC", 0)
+    polls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/claude":
+            return httpx.Response(200, json={"job_id": "j1"})
+        polls["n"] += 1
+        if polls["n"] < 2:
+            return httpx.Response(200, json={"done": False})
+        return httpx.Response(200, json={
+            "done": True, "ok": True, "output": "fixed the bug",
+            "session_id": "sess-9", "project": "C:/kaggle/rogii",
+        })
+
+    notifier = FakeNotifier()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        out = await tools.execute(
+            "claude_code",
+            {"project": "C:/kaggle/rogii", "prompt": "fix the bug"},
+            client, _settings(), notifier,
+        )
+        # The tool returns at once; the answer lands in the chat when Claude is done.
+        assert "j1" in out
+        assert not notifier.texts
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if notifier.texts:
+                break
+
+    assert len(notifier.texts) == 1
+    assert "fixed the bug" in notifier.texts[0]
+    assert "sess-9" in notifier.texts[0]  # so the owner can resume the thread
+
+
+@pytest.mark.asyncio
+async def test_screenshot_is_sent_as_a_photo_not_pasted_as_text():
+    png = b"\x89PNG\r\n\x1a\n fake"
+
+    def handler(request):
+        return httpx.Response(200, json={"png_b64": base64.b64encode(png).decode()})
+
+    notifier = FakeNotifier()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        out = await tools.execute("pc_screenshot", {}, client, _settings(), notifier)
+
+    assert notifier.photos == [(png, "screen")]
+    assert "sent" in out
+
+
+@pytest.mark.asyncio
+async def test_pc_keys_posts_the_payload():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = request.content
+        return httpx.Response(200, json={"sent": "sent"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        out = await tools.execute("pc_keys", {"keys": "hi{ENTER}"}, client, _settings())
+
+    assert seen["path"] == "/keys"
+    assert b"hi{ENTER}" in seen["body"]
+    assert out == "keys sent"
 
 
 @pytest.mark.asyncio

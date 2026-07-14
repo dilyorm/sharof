@@ -20,15 +20,28 @@ SYSTEM_PROMPT = (
     "with the pc_* tools.\n"
     "- pc_intent: simple desktop actions on the PC ('open youtube', 'play lofi', "
     "'search X', 'open telegram').\n"
-    "- pc_run: anything else on the PC, as PowerShell.\n"
+    "- pc_run: anything else on the PC, as PowerShell. Listing folders, checking "
+    "processes, reading files — do it here.\n"
+    "- claude_code: launch Claude Code in a project folder on the PC to read or change "
+    "code. It runs in the background and its result arrives as a separate message, so "
+    "just confirm that it started. Pass session_id to continue an earlier run.\n"
+    "- pc_screenshot / pc_keys: see the screen, type into the focused window.\n"
     "- server_run / read_file / write_file: this server, not the PC.\n"
     "If the message is just conversation, answer directly and call no tool. If a tool "
-    "reports the PC is offline, say so plainly. Reply in the user's language, briefly."
+    "reports the PC is offline, say so plainly.\n\n"
+    "FORMAT: Telegram shows your reply as plain text. Never use markdown — no **bold**, "
+    "no ##headings, no backticks, no numbered/bulleted markdown lists. Write plain "
+    "sentences; if you must list things, one per line with a leading '- '. Keep it "
+    "short: a folder listing is a bare list of names, not a report. Reply in the user's "
+    "language."
 )
 
 
 async def handle(
-    client: httpx.AsyncClient, settings: Settings, history: list[Message]
+    client: httpx.AsyncClient,
+    settings: Settings,
+    history: list[Message],
+    notify: tools.Notifier | None = None,
 ) -> str:
     """history ends with the owner's new message (bot.py stores it first)."""
     schemas = tools.schemas(settings)
@@ -48,7 +61,7 @@ async def handle(
                 args = json.loads(fn.get("arguments") or "{}")
             except ValueError:
                 args = {}
-            result = await tools.execute(name, args, client, settings)
+            result = await tools.execute(name, args, client, settings, notify)
             log.info("tool %s -> %s", name, result[:120].replace("\n", " "))
             messages.append({
                 "role": "tool",

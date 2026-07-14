@@ -1,17 +1,74 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 import httpx
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
+from aiogram.types import BufferedInputFile
 from aiogram.types import Message as TgMessage
 
 from sharof import agent, db, gate, llm
 from sharof.config import Settings
 
 log = logging.getLogger("sharof")
+
+TG_LIMIT = 4000  # Telegram's hard cap is 4096
+
+# Replies go out as plain text (no parse_mode), so any markdown the model emits
+# shows up as literal **stars**. Strip the marks instead of trusting parse_mode,
+# which rejects the whole message when the syntax is unbalanced.
+_MD_MARKS = re.compile(r"\*\*|__|~~|`{1,3}")
+_MD_HEADING = re.compile(r"^\s{0,3}#{1,6}\s*", re.M)
+_MD_BULLET = re.compile(r"^(\s*)[*+]\s+", re.M)
+
+
+def plain(text: str) -> str:
+    text = _MD_MARKS.sub("", text)
+    text = _MD_HEADING.sub("", text)
+    return _MD_BULLET.sub(r"\1- ", text).strip()
+
+
+def chunks(text: str) -> list[str]:
+    """Split on line boundaries so a long reply doesn't get rejected."""
+    out: list[str] = []
+    for line in text.split("\n"):
+        if out and len(out[-1]) + len(line) + 1 <= TG_LIMIT:
+            out[-1] += "\n" + line
+        else:
+            while len(line) > TG_LIMIT:
+                out.append(line[:TG_LIMIT])
+                line = line[TG_LIMIT:]
+            out.append(line)
+    return [c for c in out if c.strip()] or ["(empty)"]
+
+
+async def send(message: TgMessage, text: str) -> None:
+    for chunk in chunks(plain(text)):
+        await message.answer(chunk)
+
+
+class ChatNotifier:
+    """Lets a tool talk to the chat on its own — a finished Claude run, a screenshot."""
+
+    def __init__(self, message: TgMessage, pool, settings: Settings) -> None:
+        self._message = message
+        self._pool = pool
+        self._settings = settings
+
+    async def text(self, body: str) -> None:
+        await send(self._message, body)
+        await db.store_message(
+            self._pool, self._message.chat.id, self._message.chat.type, None,
+            self._settings.bot_username or "sharof", body, True,
+        )
+
+    async def photo(self, png: bytes, caption: str) -> None:
+        await self._message.answer_photo(
+            BufferedInputFile(png, filename="screen.png"), caption=caption
+        )
 
 
 def build_dispatcher(pool, client: httpx.AsyncClient, settings: Settings, bot_id: int) -> Dispatcher:
@@ -30,14 +87,15 @@ def build_dispatcher(pool, client: httpx.AsyncClient, settings: Settings, bot_id
         history = await db.fetch_recent(pool, message.chat.id, settings.context_msgs)
         try:
             if _is_owner(message):
-                answer = await agent.handle(client, settings, history)
+                notifier = ChatNotifier(message, pool, settings)
+                answer = await agent.handle(client, settings, history, notifier)
             else:
                 answer = await llm.chat(client, settings, history)
         except llm.LLMError:
             log.warning("chat LLM failed for chat %s", message.chat.id)
             await message.reply("Band edaman, birozdan keyin urinib ko'ring. / Busy, try again soon.")
             return
-        await message.reply(answer)
+        await send(message, answer)
         await db.store_message(
             pool, message.chat.id, message.chat.type, None,
             settings.bot_username or "sharof", answer, True,
@@ -65,7 +123,7 @@ def build_dispatcher(pool, client: httpx.AsyncClient, settings: Settings, bot_id
             except llm.LLMError:
                 await message.reply("Band edaman, birozdan keyin. / Busy, try again.")
                 return
-            await message.reply(summary)
+            await send(message, summary)
         except Exception:
             log.exception("on_summarize failed for chat %s", message.chat.id)
 
