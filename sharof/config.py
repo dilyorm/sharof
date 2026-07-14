@@ -6,6 +6,8 @@ from typing import Mapping
 DEFAULT_MODEL = "openai/gpt-oss-120b:free"
 # Free models are unreliable at tool calling; the controller needs one that isn't.
 DEFAULT_TOOL_MODEL = "deepseek/deepseek-chat-v3-0324"
+# DeepSeek is text-only. Anything with an image in it goes to this one instead.
+DEFAULT_VISION_MODEL = "google/gemini-2.5-flash-lite"
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,7 @@ class Settings:
     # remote controller
     owner_ids: frozenset[int] = frozenset()
     openrouter_tool_model: str = DEFAULT_TOOL_MODEL
+    openrouter_vision_model: str = DEFAULT_VISION_MODEL
     pc_url: str = "http://127.0.0.1:9099"
     pc_secret: str = ""
     allow_shell: bool = True
@@ -51,6 +54,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         bot_username=env.get("BOT_USERNAME", "") or "",
         owner_ids=_int_set(env.get("OWNER_IDS", "") or ""),
         openrouter_tool_model=env.get("OPENROUTER_TOOL_MODEL") or DEFAULT_TOOL_MODEL,
+        openrouter_vision_model=env.get("OPENROUTER_VISION_MODEL") or DEFAULT_VISION_MODEL,
         pc_url=(env.get("PC_URL") or "http://127.0.0.1:9099").rstrip("/"),
         pc_secret=env.get("PC_SECRET", "") or "",
         allow_shell=(env.get("ALLOW_SHELL", "true") or "true").lower() != "false",

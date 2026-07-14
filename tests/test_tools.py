@@ -166,6 +166,45 @@ async def test_screenshot_is_sent_as_a_photo_not_pasted_as_text():
 
 
 @pytest.mark.asyncio
+async def test_pc_look_sends_the_screen_to_the_vision_model():
+    png = base64.b64encode(b"fakepng").decode()
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/screenshot":
+            return httpx.Response(200, json={"png_b64": png})
+        body = request.read().decode()
+        seen["model"] = request.url.host
+        seen["has_image"] = "image_url" in body and png in body
+        seen["vision_model"] = "gemini" in body
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "VS Code is focused, tests are red."}}]
+        })
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        out = await tools.execute(
+            "pc_look", {"question": "what is focused?"}, client,
+            _settings(openrouter_vision_model="google/gemini-2.5-flash"),
+        )
+
+    assert out == "VS Code is focused, tests are red."
+    assert seen["has_image"], "the screenshot must actually reach the model"
+    assert seen["vision_model"], "must use the vision model, not the text-only tool model"
+
+
+@pytest.mark.asyncio
+async def test_pc_look_reports_an_offline_pc_instead_of_calling_the_model():
+    def handler(request):
+        if request.url.path == "/screenshot":
+            raise httpx.ConnectError("refused", request=request)
+        raise AssertionError("must not call the model with no screen")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        out = await tools.execute("pc_look", {"question": "?"}, client, _settings())
+    assert out == "PC offline (tunnel down)"
+
+
+@pytest.mark.asyncio
 async def test_pc_keys_posts_the_payload():
     seen = {}
 

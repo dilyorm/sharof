@@ -11,6 +11,7 @@ from typing import Protocol
 
 import httpx
 
+from sharof import llm
 from sharof.config import Settings
 
 log = logging.getLogger("sharof")
@@ -124,6 +125,27 @@ _BASE_TOOLS = [
             "name": "pc_screenshot",
             "description": "Capture the PC's screen and send it to the chat as a photo.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "pc_look",
+            "description": (
+                "Capture the PC's screen and READ it: returns an answer in words, so you "
+                "can act on what is on screen (which window has focus, what an error says, "
+                "what a Claude session is waiting for). Use this before pc_keys."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "What to look for, e.g. 'which window is focused and what does it show?'",
+                    }
+                },
+                "required": ["question"],
+            },
         },
     },
     {
@@ -329,6 +351,19 @@ async def _claude_code(
     )
 
 
+async def _pc_look(
+    client: httpx.AsyncClient, settings: Settings, question: str
+) -> str:
+    """Screen -> vision model -> words. The tool model itself cannot see."""
+    body = await _pc_get(client, settings, "/screenshot", 45)
+    if isinstance(body, str):
+        return body
+    try:
+        return truncate(await llm.look(client, settings, body.get("png_b64", ""), question))
+    except llm.LLMError as exc:
+        return f"could not read the screen: {exc}"
+
+
 async def _pc_screenshot(
     client: httpx.AsyncClient, settings: Settings, notify: Notifier | None
 ) -> str:
@@ -361,6 +396,8 @@ async def execute(
             return await _claude_code(client, settings, args, notify)
         if name == "pc_screenshot":
             return await _pc_screenshot(client, settings, notify)
+        if name == "pc_look":
+            return await _pc_look(client, settings, str(args.get("question", "")))
         if name == "pc_keys":
             body = await _pc_post(
                 client, settings, "/keys", {"keys": str(args.get("keys", ""))}, 20

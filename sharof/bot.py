@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import io
 import logging
 import re
 from datetime import datetime, timezone
@@ -74,6 +76,18 @@ class ChatNotifier:
 def build_dispatcher(pool, client: httpx.AsyncClient, settings: Settings, bot_id: int) -> Dispatcher:
     dp = Dispatcher()
 
+    def _mentions_bot(text: str, message: TgMessage, bot_id: int) -> bool:
+        """In a group the bot only answers when spoken to."""
+        is_mention = bool(settings.bot_username) and (
+            f"@{settings.bot_username.lstrip('@')}" in (text or "")
+        )
+        is_reply_to_bot = bool(
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.id == bot_id
+        )
+        return is_mention or is_reply_to_bot
+
     def _is_owner(message: TgMessage) -> bool:
         # Tools are remote code execution on two machines. Owner user ids only,
         # and never in a group (anyone can add the bot to one).
@@ -127,6 +141,40 @@ def build_dispatcher(pool, client: httpx.AsyncClient, settings: Settings, bot_id
         except Exception:
             log.exception("on_summarize failed for chat %s", message.chat.id)
 
+    @dp.message(F.photo)
+    async def on_photo(message: TgMessage) -> None:
+        """Images go to the vision model — the chat and tool models are text-only."""
+        try:
+            chat, user = message.chat, message.from_user
+            caption = message.caption or ""
+            if chat.type != "private" and not _mentions_bot(caption, message, bot_id):
+                return
+
+            buf = io.BytesIO()
+            await message.bot.download(message.photo[-1], destination=buf)
+            png_b64 = base64.b64encode(buf.getvalue()).decode()
+
+            await db.store_message(
+                pool, chat.id, chat.type,
+                user.id if user else None,
+                user.username if user else None,
+                f"[image] {caption}".strip(), False,
+            )
+            try:
+                answer = await llm.look(client, settings, png_b64, caption)
+            except llm.LLMError:
+                log.warning("vision failed for chat %s", chat.id)
+                await message.reply("Rasmni ko'ra olmadim. / Couldn't read that image.")
+                return
+
+            await send(message, answer)
+            await db.store_message(
+                pool, chat.id, chat.type, None,
+                settings.bot_username or "sharof", answer, True,
+            )
+        except Exception:
+            log.exception("on_photo failed for chat %s", message.chat.id)
+
     @dp.message(F.text)
     async def on_text(message: TgMessage) -> None:
         try:
@@ -146,15 +194,7 @@ def build_dispatcher(pool, client: httpx.AsyncClient, settings: Settings, bot_id
                 return
 
             # group / supergroup
-            is_mention = bool(settings.bot_username) and (
-                f"@{settings.bot_username.lstrip('@')}" in message.text
-            )
-            is_reply_to_bot = bool(
-                message.reply_to_message
-                and message.reply_to_message.from_user
-                and message.reply_to_message.from_user.id == bot_id
-            )
-            if is_mention or is_reply_to_bot:
+            if _mentions_bot(message.text, message, bot_id):
                 await _reply_with_context(message)
                 return
 

@@ -91,6 +91,30 @@ async def tool_call(
     })
 
 
+async def look(
+    client: httpx.AsyncClient, settings: Settings, png_b64: str, question: str
+) -> str:
+    """Ask the vision model about an image. The chat and tool models are text-only."""
+    msg = await _request(client, settings, {
+        "model": settings.openrouter_vision_model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": question or "Describe this image."},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{png_b64}"},
+                },
+            ],
+        }],
+        "max_tokens": 700,
+    })
+    content = msg.get("content")
+    if content is None:
+        raise LLMError("vision model returned no content")
+    return content.strip()
+
+
 async def chat(client: httpx.AsyncClient, settings: Settings, history: list[Message]) -> str:
     return await _post(client, settings, build_messages(history, settings.bot_username), 800)
 
