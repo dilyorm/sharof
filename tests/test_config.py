@@ -59,7 +59,7 @@ def test_controller_defaults_are_locked_down():
         "TELEGRAM_TOKEN": "tok", "OPENROUTER_API_KEY": "key", "DATABASE_URL": "x",
     })
     assert s.owner_ids == frozenset()  # no owners => agent never runs
-    assert s.openrouter_tool_model == "deepseek/deepseek-chat-v3-0324"
+    assert s.openrouter_tool_model == "google/gemini-2.5-flash-lite"
     assert s.pc_url == "http://127.0.0.1:9099"
 
 

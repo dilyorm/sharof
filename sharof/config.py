@@ -4,9 +4,12 @@ from dataclasses import dataclass
 from typing import Mapping
 
 DEFAULT_MODEL = "openai/gpt-oss-120b:free"
-# Free models are unreliable at tool calling; the controller needs one that isn't.
-DEFAULT_TOOL_MODEL = "deepseek/deepseek-chat-v3-0324"
-# DeepSeek is text-only. Anything with an image in it goes to this one instead.
+# The controller model must actually call tools. Measured against a real chat history
+# where the bot had already answered PC commands in prose a few times, DeepSeek imitated
+# its own past replies and called no tool in half the runs; gemini-2.5-flash-lite called
+# the tool every time, for a third of the price. It is also multimodal, so it doubles as
+# the vision model.
+DEFAULT_TOOL_MODEL = "google/gemini-2.5-flash-lite"
 DEFAULT_VISION_MODEL = "google/gemini-2.5-flash-lite"
 
 
